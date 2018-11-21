@@ -103,8 +103,7 @@ server db =
   getPred
   where
     getDataXYAll = liftIO $ IntMap.elems . snd <$> readTVarIO db
-    getDataXY did =
-      liftIO $ IntMap.findWithDefault newDataXY did . snd <$> readTVarIO db
+    getDataXY did = liftIO $ findById did db
     postDataXY dataXY =
       liftIO . atomically $ do
         (maxId, m) <- readTVar db
@@ -123,17 +122,11 @@ server db =
     deleteDataXY did =
       liftIO . atomically . modifyTVar db $ \(maxId, m) ->
         (maxId, IntMap.delete did m)
-    getConst did dim =
-      liftIO $
-      calcConst dim . IntMap.findWithDefault newDataXY did . snd <$>
-      readTVarIO db
-    getConstN did dim =
-      liftIO $
-      calcConstN dim . IntMap.findWithDefault newDataXY did . snd <$>
-      readTVarIO db
-    getPred did x =
-      liftIO $
-      calcPred x . IntMap.findWithDefault newDataXY did . snd <$> readTVarIO db
+    getConst did dim = liftIO $ calcConst dim <$> findById did db
+    getConstN did dim = liftIO $ calcConstN dim <$> findById did db
+    getPred did x = liftIO $ calcPred x <$> findById did db
+
+findById did db = IntMap.findWithDefault newDataXY did . snd <$> readTVarIO db
 
 newDataXY :: DataXY
 newDataXY = DataXY (Just 0) [] []
