@@ -20,7 +20,17 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/ynishi/peakseek#readme>
 
 dependencies:
+- aeson
 - base >= 4.7 && < 5
+- containers 
+- servant-server
+- stm
+- text
+- time
+- wai
+- warp
+- array
+- dsp
 
 library:
   source-dirs: src
