@@ -156,8 +156,9 @@ fromMysqlValueToDataXYList mvs =
 instance Store DBMysql where
   findById did (DBMysql conn) = do
     stmt <- prepareStmt conn "select * from dataxy where id = ?"
-    (defs, is) <- queryStmt conn stmt [MySQLInt32U (fromIntegral did)]
+    (defs, is) <- queryStmt conn stmt [MySQLInt32 (fromIntegral did)]
     xs <- Streams.toList is
+    print "found:"
     print xs
     return $ fromMysqlValueToDataXY xs
   findAll (DBMysql conn) = do
@@ -168,6 +169,7 @@ instance Store DBMysql where
   create dataXY (DBMysql conn) = do
     (_, maxId) <- query_ conn "select max(id) from dataxy"
     maxIdL <- Streams.toList maxId
+    print maxIdL
     let maxi = inc $ (P.head . P.head $ maxIdL)
     let newDataXY = setId maxi dataXY
     stmt <- prepareStmt conn "INSERT INTO dataxy values(?,?,?)"
@@ -179,6 +181,7 @@ instance Store DBMysql where
         [MySQLInt32 maxi, MySQLDouble . fst $ xy, MySQLDouble . snd $ xy]
     return newDataXY
     where
+      inc MySQLNull      = 0
       inc (MySQLInt32 i) = i + 1
       setId did dataXY = dataXY {dataXYId = Just $ fromIntegral did}
   updateById did dataXY (DBMysql conn) = do
