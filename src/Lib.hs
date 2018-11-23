@@ -1,11 +1,12 @@
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TypeOperators     #-}
 
 module Lib
   ( startApp
-  , DataXY(..)
+  , DBMysql(..)
   ) where
 
 import           Control.Concurrent
@@ -28,6 +29,9 @@ import           Data.List
 import           Matrix.LU
 
 import           Prelude                  as P
+
+import           Database.MySQL.Base
+import qualified System.IO.Streams        as Streams
 
 data DataXY = DataXY
   { dataXYId :: Maybe Int
@@ -76,57 +80,78 @@ $(deriveJSON defaultOptions ''ConstElem)
 
 $(deriveJSON defaultOptions ''Pred)
 
-type DB = TVar (Int, IntMap.IntMap DataXY)
+data DBTVar =
+  DBTVar (TVar (Int, IntMap.IntMap DataXY))
+
+data DBMysql =
+  DBMysql MySQLConn
+
+class Store a where
+  findById :: Int -> a -> IO DataXY
+  findAll :: a -> IO [DataXY]
+  create :: DataXY -> a -> IO DataXY
+  updateById :: Int -> DataXY -> a -> IO ()
+  deleteById :: Int -> a -> IO ()
 
 type DataXYApi
    = "data" :> Get '[ JSON] [DataXY] :<|> "data" :> Capture "id" Int :> Get '[ JSON] DataXY :<|> "data" :> ReqBody '[ JSON] DataXY :> Post '[ JSON] DataXY :<|> "data" :> Capture "id" Int :> ReqBody '[ JSON] DataXY :> Put '[ JSON] () :<|> "data" :> Capture "id" Int :> Delete '[ JSON] () :<|> "data" :> Capture "id" Int :> "const" :> Capture "dim" Int :> Get '[ JSON] Const :<|> "data" :> Capture "id" Int :> "constn" :> Capture "dim" Int :> Get '[ JSON] ConstN :<|> "data" :> Capture "id" Int :> "pred" :> Capture "x" Double :> Get '[ JSON] Pred
 
-startApp :: IO ()
-startApp = do
-  db <- atomically $ newTVar (0, IntMap.empty)
-  putStrLn $ "start server:" ++ show port
-  run port $ Lib.app db
-  where
-    port = 8080
+startApp :: Store s => Int -> s -> IO ()
+startApp port store = do
+  run port $ Lib.app store
 
-app :: DB -> Application
+app :: Store s => s -> Application
 app db = serve api (server db)
 
 api :: Proxy DataXYApi
 api = Proxy
 
-server :: DB -> Server DataXYApi
+server :: Store s => s -> Server DataXYApi
 server db =
   getDataXYAll :<|> getDataXY :<|> postDataXY :<|> putDataXY :<|> deleteDataXY :<|>
   getConst :<|>
   getConstN :<|>
   getPred
   where
-    getDataXYAll = liftIO $ IntMap.elems . snd <$> readTVarIO db
+    getDataXYAll = liftIO $ findAll db
     getDataXY did = liftIO $ findById did db
-    postDataXY dataXY =
-      liftIO . atomically $ do
-        (maxId, m) <- readTVar db
-        let newId = inc maxId (IntMap.keys m)
-        let newDataXY = dataXY {dataXYId = Just newId}
-        writeTVar db (newId, IntMap.insert newId newDataXY m)
-        pure newDataXY
-      where
-        inc i ks =
-          if i `elem` ks
-            then inc (i + 1) ks
-            else i
-    putDataXY did dataXY =
-      liftIO . atomically . modifyTVar db $ \(maxId, m) ->
-        (max maxId did, IntMap.insert did dataXY m)
-    deleteDataXY did =
-      liftIO . atomically . modifyTVar db $ \(maxId, m) ->
-        (maxId, IntMap.delete did m)
+    postDataXY dataXY = liftIO $ create dataXY db
+    putDataXY did dataXY = liftIO $ updateById did dataXY db
+    deleteDataXY did = liftIO $ deleteById did db
     getConst did dim = liftIO $ calcConst dim <$> findById did db
     getConstN did dim = liftIO $ calcConstN dim <$> findById did db
     getPred did x = liftIO $ calcPred x <$> findById did db
 
-findById did db = IntMap.findWithDefault newDataXY did . snd <$> readTVarIO db
+convertFromMysqlValueToDataXY :: [MySQLValue] -> DataXY
+convertFromMysqlValueToDataXY _ = newDataXY
+
+instance Store DBMysql where
+  findById did (DBMysql conn) = do
+    (defs, is) <- query_ conn "select * from dataxy"
+    xs <- Streams.toList is
+    return $ convertFromMysqlValueToDataXY $ P.head xs
+
+instance Store DBTVar where
+  findById did (DBTVar db) =
+    IntMap.findWithDefault newDataXY did . snd <$> readTVarIO db
+  findAll (DBTVar db) = IntMap.elems . snd <$> readTVarIO db
+  create dataXY (DBTVar db) =
+    atomically $ do
+      (maxId, m) <- readTVar db
+      let newId = inc maxId (IntMap.keys m)
+      let newDataXY = dataXY {dataXYId = Just newId}
+      writeTVar db (newId, IntMap.insert newId newDataXY m)
+      pure newDataXY
+    where
+      inc i ks =
+        if i `elem` ks
+          then inc (i + 1) ks
+          else i
+  updateById did dataXY (DBTVar db) =
+    atomically . modifyTVar db $ \(maxId, m) ->
+      (max maxId did, IntMap.insert did dataXY m)
+  deleteById did (DBTVar db) =
+    atomically . modifyTVar db $ \(maxId, m) -> (maxId, IntMap.delete did m)
 
 newDataXY :: DataXY
 newDataXY = DataXY (Just 0) [] []
