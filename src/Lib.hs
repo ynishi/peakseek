@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds         #-}
+{-# LANGUAGE InstanceSigs      #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
@@ -122,14 +123,86 @@ server db =
     getConstN did dim = liftIO $ calcConstN dim <$> findById did db
     getPred did x = liftIO $ calcPred x <$> findById did db
 
-convertFromMysqlValueToDataXY :: [MySQLValue] -> DataXY
-convertFromMysqlValueToDataXY _ = newDataXY
+fromMysqlValueToDataXY :: [[MySQLValue]] -> DataXY
+fromMysqlValueToDataXY mvs =
+  rev .
+  P.foldl
+    (\z d@((MySQLInt32 i):(MySQLDouble x):(MySQLDouble y):_) ->
+       z {dataXYId = Just $ fromIntegral i, xs = x : (xs z), ys = y : (ys z)})
+    newDataXY $
+  mvs
+  where
+    rev d = d {xs = P.reverse (xs d), ys = P.reverse (ys d)}
+
+fromMysqlValueToDataXYList :: [[MySQLValue]] -> [DataXY]
+fromMysqlValueToDataXYList mvs =
+  P.map (rev . setId) .
+  IntMap.toList .
+  P.foldl
+    (\z d@((MySQLInt32 i):(MySQLDouble x):(MySQLDouble y):_) ->
+       IntMap.insertWith
+         (\a1 a2 -> a1 {xs = (xs a1) ++ (xs a2), ys = (ys a1) ++ (ys a2)})
+         (fromIntegral i)
+         (newDataXY {dataXYId = Nothing, xs = [x], ys = [y]})
+         z)
+    im $
+  mvs
+  where
+    im :: IntMap.IntMap DataXY
+    im = IntMap.empty
+    rev d = d {xs = P.reverse (xs d), ys = P.reverse (ys d)}
+    setId (i, d) = d {dataXYId = Just (i)}
 
 instance Store DBMysql where
   findById did (DBMysql conn) = do
+    stmt <- prepareStmt conn "select * from dataxy where id = ?"
+    (defs, is) <- queryStmt conn stmt [MySQLInt32U (fromIntegral did)]
+    xs <- Streams.toList is
+    print xs
+    return $ fromMysqlValueToDataXY xs
+  findAll (DBMysql conn) = do
     (defs, is) <- query_ conn "select * from dataxy"
     xs <- Streams.toList is
-    return $ convertFromMysqlValueToDataXY $ P.head xs
+    print xs
+    return $ fromMysqlValueToDataXYList xs
+  create dataXY (DBMysql conn) = do
+    (_, maxId) <- query_ conn "select max(id) from dataxy"
+    maxIdL <- Streams.toList maxId
+    let maxi = inc $ (P.head . P.head $ maxIdL)
+    let newDataXY = setId maxi dataXY
+    stmt <- prepareStmt conn "INSERT INTO dataxy values(?,?,?)"
+    let xys = P.zip (xs dataXY) (ys dataXY)
+    forM_ xys $ \xy -> do
+      executeStmt
+        conn
+        stmt
+        [MySQLInt32 maxi, MySQLDouble . fst $ xy, MySQLDouble . snd $ xy]
+    return newDataXY
+    where
+      inc (MySQLInt32 i) = i + 1
+      setId did dataXY = dataXY {dataXYId = Just $ fromIntegral did}
+  updateById did dataXY (DBMysql conn) = do
+    delStmt <- prepareStmt conn "DELETE from dataxy where id = ? and x = ?"
+    insStmt <- prepareStmt conn "INSERT INTO dataxy values(?,?,?)"
+    forM_ xys $ \xy -> do
+      executeStmt
+        conn
+        delStmt
+        [MySQLInt32 $ fromIntegral did, MySQLDouble . fst $ xy]
+      executeStmt
+        conn
+        insStmt
+        [ MySQLInt32 $ fromIntegral did
+        , MySQLDouble . fst $ xy
+        , MySQLDouble . snd $ xy
+        ]
+    where
+      xys :: [(Double, Double)]
+      xys = P.zip (xs dataXY) (ys dataXY)
+  deleteById did (DBMysql conn) = do
+    stmt <- prepareStmt conn "DELETE from dataxy where id = ?"
+    executeStmt conn stmt [MySQLInt32 $ fromIntegral did]
+    return ()
 
 instance Store DBTVar where
   findById did (DBTVar db) =
