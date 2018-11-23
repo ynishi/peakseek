@@ -1,0 +1,25 @@
+version: "3"
+services:
+  db-proxy:
+    image: gcr.io/cloudsql-docker/gce-proxy
+    command: /cloud_sql_proxy -instances=${CLOUDSQL_CONNECTION}=tcp:0.0.0.0:3306 -credential_file=/config
+    volumes:
+      - ./db-proxy:/cloudsql
+      - ${CLOUDSQL_CONFIG}:/config
+    ports:
+      - "127.0.0.1:3307:3306"
+  db:
+    image: mysql:8
+    expose:
+      - 3306
+    volumes:
+      - ./db/var:/var/lib/mysql
+      - ./db/etc:/etc/mysql/conf.d
+      - ./db/initdb:/docker-entrypoint-initdb.d
+    ports:
+      - 3306:3306
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: peakseek
+      MYSQL_USER: peakseek
+      MYSQL_PASSWORD: peakseek 
