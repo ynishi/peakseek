@@ -31,6 +31,8 @@ dependencies:
 - warp
 - array
 - dsp
+- mysql-haskell
+- io-streams
 
 library:
   source-dirs: src

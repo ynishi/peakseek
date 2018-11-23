@@ -1,3 +1,5 @@
 .stack-work/
 peakseek.cabal
 *~
+db/var/
+!.gitignore
