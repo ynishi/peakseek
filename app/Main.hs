@@ -4,6 +4,7 @@ module Main where
 
 import           Database.MySQL.Base
 import           Lib
+import           System.Environment
 
 mysqlConnInfo =
   defaultConnectInfo
@@ -14,6 +15,8 @@ mysqlConnInfo =
     }
 
 main :: IO ()
-main = connect mysqlConnInfo >>= startApp port . DBMysql
+main = lookupEnv "PEAKSEEK_DB_HOST" >>= startApp port . DBMysqlCI . setHost
   where
     port = 8080
+    setHost Nothing     = mysqlConnInfo
+    setHost (Just host) = mysqlConnInfo {ciHost = host}
