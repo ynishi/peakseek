@@ -97,11 +97,12 @@ $(deriveJSON defaultOptions ''ConstElem)
 
 $(deriveJSON defaultOptions ''Pred)
 
-data DBTVar =
+newtype DBTVar =
   DBTVar (TVar (Int, IntMap.IntMap DataXY))
 
-data DBMysql =
-  DBMysql MySQLConn
+data DBMysql
+  = DBMysql MySQLConn
+  | DBMysqlCI ConnectInfo
 
 class Store a where
   findById :: Int -> a -> IO DataXY
@@ -155,36 +156,40 @@ server db =
     getPred did x = liftIO $ calcPred x <$> findById did db
 
 fromMysqlValueToDataXY :: [[MySQLValue]] -> DataXY
-fromMysqlValueToDataXY mvs =
+fromMysqlValueToDataXY =
   rev .
   P.foldl
-    (\z d@((MySQLInt32 i):(MySQLDouble x):(MySQLDouble y):_) ->
-       z {dataXYId = Just $ fromIntegral i, xs = x : (xs z), ys = y : (ys z)})
-    newDataXY $
-  mvs
+    (\z d@(MySQLInt32 i:MySQLDouble x:MySQLDouble y:_) ->
+       z {dataXYId = Just $ fromIntegral i, xs = x : xs z, ys = y : ys z})
+    newDataXY
   where
     rev d = d {xs = P.reverse (xs d), ys = P.reverse (ys d)}
 
 fromMysqlValueToDataXYList :: [[MySQLValue]] -> [DataXY]
-fromMysqlValueToDataXYList mvs =
+fromMysqlValueToDataXYList =
   P.map (rev . setId) .
   IntMap.toList .
   P.foldl
-    (\z d@((MySQLInt32 i):(MySQLDouble x):(MySQLDouble y):_) ->
+    (\z d@(MySQLInt32 i:MySQLDouble x:MySQLDouble y:_) ->
        IntMap.insertWith
-         (\a1 a2 -> a1 {xs = (xs a1) ++ (xs a2), ys = (ys a1) ++ (ys a2)})
+         (\a1 a2 -> a1 {xs = xs a1 ++ xs a2, ys = ys a1 ++ ys a2})
          (fromIntegral i)
          (newDataXY {dataXYId = Nothing, xs = [x], ys = [y]})
          z)
-    im $
-  mvs
+    im
   where
     im :: IntMap.IntMap DataXY
     im = IntMap.empty
     rev d = d {xs = P.reverse (xs d), ys = P.reverse (ys d)}
-    setId (i, d) = d {dataXYId = Just (i)}
+    setId (i, d) = d {dataXYId = Just i}
+
+connFromMysqlCI :: ConnectInfo -> IO DBMysql
+connFromMysqlCI ci = do
+  conn <- connect ci
+  return $ DBMysql conn
 
 instance Store DBMysql where
+  findById did (DBMysqlCI ci) = connFromMysqlCI ci >>= findById did
   findById did (DBMysql conn) = do
     stmt <- prepareStmt conn "select * from dataxy where id = ?"
     (defs, is) <- queryStmt conn stmt [MySQLInt32 (fromIntegral did)]
@@ -192,20 +197,22 @@ instance Store DBMysql where
     print "found:"
     print xs
     return $ fromMysqlValueToDataXY xs
+  findAll (DBMysqlCI ci) = connFromMysqlCI ci >>= findAll
   findAll (DBMysql conn) = do
     (defs, is) <- query_ conn "select * from dataxy"
     xs <- Streams.toList is
     print xs
     return $ fromMysqlValueToDataXYList xs
+  create dataXY (DBMysqlCI ci) = connFromMysqlCI ci >>= create dataXY
   create dataXY (DBMysql conn) = do
     (_, maxId) <- query_ conn "select max(id) from dataxy"
     maxIdL <- Streams.toList maxId
     print maxIdL
-    let maxi = inc $ (P.head . P.head $ maxIdL)
+    let maxi = inc . P.head . P.head $ maxIdL
     let newDataXY = setId maxi dataXY
     stmt <- prepareStmt conn "INSERT INTO dataxy values(?,?,?)"
     let xys = P.zip (xs dataXY) (ys dataXY)
-    forM_ xys $ \xy -> do
+    forM_ xys $ \xy ->
       executeStmt
         conn
         stmt
@@ -215,6 +222,8 @@ instance Store DBMysql where
       inc MySQLNull      = 0
       inc (MySQLInt32 i) = i + 1
       setId did dataXY = dataXY {dataXYId = Just $ fromIntegral did}
+  updateById did dataXY (DBMysqlCI ci) =
+    connFromMysqlCI ci >>= updateById did dataXY
   updateById did dataXY (DBMysql conn) = do
     delStmt <- prepareStmt conn "DELETE from dataxy where id = ? and x = ?"
     insStmt <- prepareStmt conn "INSERT INTO dataxy values(?,?,?)"
@@ -233,6 +242,7 @@ instance Store DBMysql where
     where
       xys :: [(Double, Double)]
       xys = P.zip (xs dataXY) (ys dataXY)
+  deleteById did (DBMysqlCI ci) = connFromMysqlCI ci >>= deleteById did
   deleteById did (DBMysql conn) = do
     stmt <- prepareStmt conn "DELETE from dataxy where id = ?"
     executeStmt conn stmt [MySQLInt32 $ fromIntegral did]
