@@ -16,12 +16,28 @@ import           Control.Monad.IO.Class
 import           Control.Monad.STM
 import           Data.Aeson
 import           Data.Aeson.TH
-import qualified Data.IntMap              as IntMap
+import qualified Data.IntMap                            as IntMap
 import           Data.Text
-import           Data.Time.Clock          (UTCTime, getCurrentTime)
+import           Data.Time.Clock                        (UTCTime,
+                                                         getCurrentTime)
 import           Network.Wai
 import           Network.Wai.Handler.Warp
 import           Servant
+
+import qualified Network.Wai.Handler.Warp               as Warp
+import           Network.Wai.Middleware.Cors            (CorsResourcePolicy (..),
+                                                         cors,
+                                                         corsExposedHeaders,
+                                                         corsIgnoreFailures,
+                                                         corsMaxAge,
+                                                         corsMethods,
+                                                         corsOrigins,
+                                                         corsRequestHeaders,
+                                                         corsRequireOrigin,
+                                                         corsVaryOrigin,
+                                                         simpleCorsResourcePolicy,
+                                                         simpleHeaders)
+import           Network.Wai.Middleware.Servant.Options (provideOptions)
 
 import           Control.Arrow
 import           Control.Monad
@@ -29,10 +45,10 @@ import           Data.Array
 import           Data.List
 import           Matrix.LU
 
-import           Prelude                  as P
+import           Prelude                                as P
 
 import           Database.MySQL.Base
-import qualified System.IO.Streams        as Streams
+import qualified System.IO.Streams                      as Streams
 
 data DataXY = DataXY
   { dataXYId :: Maybe Int
@@ -99,7 +115,23 @@ type DataXYApi
    = "data" :> Get '[ JSON] [DataXY] :<|> "data" :> Capture "id" Int :> Get '[ JSON] DataXY :<|> "data" :> ReqBody '[ JSON] DataXY :> Post '[ JSON] DataXY :<|> "data" :> Capture "id" Int :> ReqBody '[ JSON] DataXY :> Put '[ JSON] () :<|> "data" :> Capture "id" Int :> Delete '[ JSON] () :<|> "data" :> Capture "id" Int :> "const" :> Capture "dim" Int :> Get '[ JSON] Const :<|> "data" :> Capture "id" Int :> "constn" :> Capture "dim" Int :> Get '[ JSON] ConstN :<|> "data" :> Capture "id" Int :> "pred" :> Capture "x" Double :> Get '[ JSON] Pred
 
 startApp :: Store s => Int -> s -> IO ()
-startApp port store = run port $ Lib.app store
+startApp port store =
+  run port $
+  cors (P.const $ Just allowAllMethodsPolicy) $
+  provideOptions api $ Lib.app store
+  where
+    policy = simpleCorsResourcePolicy {corsRequestHeaders = ["content-type"]}
+    allowAllMethodsPolicy =
+      CorsResourcePolicy
+        { corsOrigins = Nothing
+        , corsMethods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]
+        , corsRequestHeaders = "access-control-allow-origin" : simpleHeaders
+        , corsExposedHeaders = Nothing
+        , corsMaxAge = Nothing
+        , corsVaryOrigin = False
+        , corsRequireOrigin = False
+        , corsIgnoreFailures = False
+        }
 
 app :: Store s => s -> Application
 app db = serve api (server db)
