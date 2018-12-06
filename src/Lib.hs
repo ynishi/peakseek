@@ -8,6 +8,13 @@
 module Lib
   ( startApp
   , DBMysql(..)
+  , DataXY(..)
+  , calcPred
+  , Pred(..)
+  , XY(..)
+  , newDataXY
+  , calcConst
+  , Const(..)
   ) where
 
 import           Control.Concurrent
@@ -64,12 +71,12 @@ data DataXYN = DataXYN
 data XY = XY
   { x :: Double
   , y :: Double
-  } deriving (Show)
+  } deriving (Show, Eq)
 
 data Const = Const
   { constDataXYId :: Maybe Int
   , const         :: [Double]
-  } deriving (Show)
+  } deriving (Show, Eq)
 
 data ConstN = ConstN
   { constNDataXYId :: Maybe Int
@@ -83,7 +90,7 @@ data ConstElem = ConstElem
 
 newtype Pred = Pred
   { xy :: XY
-  }
+  } deriving (Show, Eq)
 
 $(deriveJSON defaultOptions ''DataXY)
 
